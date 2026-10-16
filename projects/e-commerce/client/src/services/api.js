@@ -1,4 +1,4 @@
-const API_BASE_URL = 'https://industry-schedule-1.onrender.com/api/';
+const API_BASE_URL = 'https://industry-schedule-1.onrender.com/api';
 
 /**
  * Universal fetch wrapper with error parsing
