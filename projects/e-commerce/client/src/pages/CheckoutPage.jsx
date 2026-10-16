@@ -1,8 +1,13 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
-import { createDemoOrder, confirmDemoPayment } from '../services/api';
-import { DemoPaymentModal } from '../components/common/DemoPaymentModal';
+import {
+  createRazorpayOrder,
+  verifyPaymentSignature,
+  notifyPaymentFailure,
+} from '../services/api';
+import { launchRazorpayCheckout } from '../services/razorpay';
+import { RazorpayTestHelper } from '../components/common/RazorpayTestHelper';
 import {
   ShieldCheck,
   CreditCard,
@@ -31,10 +36,6 @@ export const CheckoutPage = () => {
   const [formErrors, setFormErrors] = useState({});
   const [isProcessing, setIsProcessing] = useState(false);
   const [generalError, setGeneralError] = useState(null);
-  const [isDemoModalOpen, setIsDemoModalOpen] = useState(false);
-  const [demoOrder, setDemoOrder] = useState(null);
-  const [processingAction, setProcessingAction] = useState(null);
-
 
   if (cartItems.length === 0) {
     return (
@@ -91,81 +92,117 @@ export const CheckoutPage = () => {
 
     try {
       setIsProcessing(true);
-      const result = await createDemoOrder({
+
+      // Step 1: Create Order on backend (server calculates authoritative price & creates Razorpay order)
+      const orderPayload = {
         items: cartItems.map((item) => ({
           productId: item.product || item._id,
           quantity: item.quantity,
         })),
         shippingAddress: formData,
-      });
+      };
 
-      if (!result.success || !result.orderId) {
-        throw new Error(result.message || 'Could not create demo order.');
+      const serverOrderData = await createRazorpayOrder(orderPayload);
+
+      const {
+        orderId,
+        orderNumber,
+        razorpayOrderId,
+        amount,
+        currency,
+        keyId,
+      } = serverOrderData;
+
+      if (!keyId || keyId.includes('placeholder')) {
+        setGeneralError(
+          'Razorpay Test Key is not configured in backend server/.env. Please set valid RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.'
+        );
+        setIsProcessing(false);
+        return;
       }
 
-      setDemoOrder(result);
-      setIsDemoModalOpen(true);
-    } catch (err) {
-      console.error('Demo order creation failed:', err);
-      setGeneralError(err.message || 'Could not initialize demo payment.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
+      // Step 2: Launch the Razorpay Checkout Modal
+      await launchRazorpayCheckout({
+        key: keyId,
+        amount,
+        currency: currency || 'INR',
+        orderId: razorpayOrderId,
+        name: 'AeroTech Electronics',
+        description: `Order #${orderNumber}`,
+        prefill: {
+          name: formData.fullName,
+          email: formData.email,
+          contact: formData.phone,
+          address: `${formData.address}, ${formData.city}`,
+        },
+        onSuccess: async (razorpayResponse) => {
+          try {
+            // Step 3: Send payment details and HMAC signature to backend for cryptographic verification
+            const verifyPayload = {
+              razorpay_order_id: razorpayResponse.razorpay_order_id,
+              razorpay_payment_id: razorpayResponse.razorpay_payment_id,
+              razorpay_signature: razorpayResponse.razorpay_signature,
+              orderId,
+            };
 
-  const handleDemoSuccess = async () => {
-    if (!demoOrder?.orderId || isProcessing) return;
+            const verificationResult = await verifyPaymentSignature(verifyPayload);
 
-    setIsProcessing(true);
-    setProcessingAction('success');
-    setGeneralError(null);
-
-    try {
-      const result = await confirmDemoPayment({
-        orderId: demoOrder.orderId,
-        status: 'SUCCESS',
+            if (verificationResult.success) {
+              clearCart();
+              navigate(`/order/success/${orderId}`);
+            } else {
+              navigate(
+                `/order/failed?orderId=${orderId}&reason=${encodeURIComponent(
+                  verificationResult.message || 'Payment signature verification failed'
+                )}`
+              );
+            }
+          } catch (verifyErr) {
+            console.error('Verification error:', verifyErr);
+            navigate(
+              `/order/failed?orderId=${orderId}&reason=${encodeURIComponent(
+                verifyErr.message || 'Failed to verify payment signature'
+              )}`
+            );
+          } finally {
+            setIsProcessing(false);
+          }
+        },
+        onDismiss: async () => {
+          setIsProcessing(false);
+          showToast('Payment window was closed without completing payment.', 'info');
+          try {
+            await notifyPaymentFailure({
+              orderId,
+              razorpay_order_id: razorpayOrderId,
+              reason: 'Customer dismissed Razorpay checkout window',
+            });
+          } catch (e) {
+            console.warn('Could not notify cancellation:', e.message);
+          }
+        },
+        onFailure: async (errorObj) => {
+          setIsProcessing(false);
+          try {
+            await notifyPaymentFailure({
+              orderId,
+              razorpay_order_id: razorpayOrderId,
+              reason: errorObj.description || 'Payment gateway declined transaction',
+            });
+          } catch (e) {
+            console.warn('Could not record failure:', e.message);
+          }
+          navigate(
+            `/order/failed?orderId=${orderId}&reason=${encodeURIComponent(
+              errorObj.description || 'Payment declined by Razorpay'
+            )}`
+          );
+        },
       });
-
-      if (!result.success) {
-        throw new Error(result.message || 'Demo payment confirmation failed.');
-      }
-
-      clearCart();
-      setIsDemoModalOpen(false);
-      navigate(`/order/success/${demoOrder.orderId}`);
     } catch (err) {
-      console.error('Demo confirmation failed:', err);
-      setGeneralError(err.message || 'Could not confirm demo payment.');
-    } finally {
+      console.error('Checkout initiation failed:', err);
+      setGeneralError(err.message || 'Failed to initialize payment order with server.');
       setIsProcessing(false);
-      setProcessingAction(null);
-    }
-  };
-
-  const handleDemoFailure = async () => {
-    if (!demoOrder?.orderId || isProcessing) return;
-
-    setIsProcessing(true);
-    setProcessingAction('failure');
-    setGeneralError(null);
-
-    try {
-      await confirmDemoPayment({
-        orderId: demoOrder.orderId,
-        status: 'FAILED',
-        failureReason: 'Payment failure simulated for testing.',
-      });
-
-      setIsDemoModalOpen(false);
-      navigate(`/order/failed?orderId=${demoOrder.orderId}&reason=${encodeURIComponent(
-        'Demo payment failed. No real money was charged.'
-      )}`);
-    } catch (err) {
-      console.error('Demo failure simulation failed:', err);
-      setGeneralError(err.message || 'Could not simulate payment failure.');
-    } finally {
-      setIsProcessing(false);
-      setProcessingAction(null);
     }
   };
 
@@ -192,7 +229,7 @@ export const CheckoutPage = () => {
       </div>
 
       {/* Razorpay Test Mode Helper Accordion */}
-      <p className="text-muted" style={{ marginBottom: '1.5rem' }}>Demo Payment Simulation — no real money is charged.</p>
+      <RazorpayTestHelper />
 
       {generalError && (
         <div
@@ -468,7 +505,7 @@ export const CheckoutPage = () => {
               ) : (
                 <>
                   <CreditCard size={18} />
-                  Simulate Payment · ₹{grandTotal.toLocaleString('en-IN')}
+                  Pay ₹{grandTotal.toLocaleString('en-IN')} with Razorpay
                 </>
               )}
             </button>
@@ -485,24 +522,11 @@ export const CheckoutPage = () => {
               }}
             >
               <Lock size={14} color="var(--success)" />
-              <span>Demo Mode &bull; No real payment</span>
+              <span>Razorpay Test Mode &bull; HMAC Signature Verified</span>
             </div>
           </div>
         </div>
       </form>
-
-      <DemoPaymentModal
-        isOpen={isDemoModalOpen}
-        onClose={() => {
-          if (!isProcessing) setIsDemoModalOpen(false);
-        }}
-        orderDetails={demoOrder}
-        shippingAddress={formData}
-        onSimulateSuccess={handleDemoSuccess}
-        onSimulateFailure={handleDemoFailure}
-        isProcessing={isProcessing}
-        processingAction={processingAction}
-      />
     </div>
   );
 };
