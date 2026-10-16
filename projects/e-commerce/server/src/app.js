@@ -15,8 +15,7 @@ const PORT = process.env.PORT || 5000;
 
 // Allow local development and deployed frontend
 const allowedOrigins = [
-  'http://localhost:5173',
-  'https://industry-schedule.vercel.app',,
+  'https://industry-schedule.vercel.app',
 ];
 
 // Enable CORS
