@@ -13,10 +13,16 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Enable CORS for frontend development
+// Allow local development and deployed frontend
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://industry-schedule-1.onrender.com',
+];
+
+// Enable CORS
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: allowedOrigins,
     credentials: true,
   })
 );
@@ -63,12 +69,12 @@ const startServer = async () => {
     await seedProductsIfNeeded();
 
     app.listen(PORT, () => {
-      console.log(`\n======================================================`);
+      console.log('\n======================================================');
       console.log(`🚀 E-Commerce Server is running on port ${PORT}`);
       console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
       console.log(`📦 Product API: http://localhost:${PORT}/api/products`);
       console.log(`💳 Payment API: http://localhost:${PORT}/api/payment/config`);
-      console.log(`======================================================\n`);
+      console.log('======================================================\n');
     });
   } catch (err) {
     console.error('Fatal Server Boot Error:', err.message);
