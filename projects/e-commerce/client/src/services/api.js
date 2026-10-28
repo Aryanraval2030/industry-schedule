@@ -1,4 +1,4 @@
-const API_BASE_URL = "https://industry-schedule-3.onrender.com/api";
+const API_BASE_URL = "https://industry-schedule-4.onrender.com/api";
 
 const request = async (endpoint, options = {}) => {
   const url = `${API_BASE_URL}${endpoint}`;
