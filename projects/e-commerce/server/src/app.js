@@ -13,14 +13,11 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Allow local development and deployed frontend
-// Allow local development and deployed frontend
 const allowedOrigins = [
   "http://localhost:5173",
   "https://industry-schedule.vercel.app",
 ];
 
-// Enable CORS
 app.use(
   cors({
     origin: allowedOrigins,
@@ -30,7 +27,6 @@ app.use(
 
 app.use(express.json());
 
-// Request logging in development
 if (process.env.NODE_ENV !== "test") {
   app.use((req, res, next) => {
     console.log(`[${req.method}] ${req.url}`);
@@ -38,7 +34,6 @@ if (process.env.NODE_ENV !== "test") {
   });
 }
 
-// Health check endpoint
 app.get("/api/health", (req, res) => {
   res.status(200).json({
     status: "ok",
@@ -47,37 +42,19 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// API Routes
 app.use("/api/products", productRoutes);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/orders", orderRoutes);
 
-// Catch-all 404 handler for undefined API routes
-app.use("/api/*", (req, res) => {
-  res.status(404).json({
-    success: false,
-    message: `API endpoint not found: ${req.originalUrl}`,
-  });
-});
-
-// Global Error Handler
 app.use(errorHandler);
 
-// Start server after connecting to database
 const startServer = async () => {
   try {
     await connectDB();
     await seedProductsIfNeeded();
 
     app.listen(PORT, () => {
-      console.log("\n======================================================");
-      console.log(`🚀 E-Commerce Server is running on port ${PORT}`);
-      console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
-      console.log(`📦 Product API: http://localhost:${PORT}/api/products`);
-      console.log(
-        `💳 Payment API: http://localhost:${PORT}/api/payment/config`,
-      );
-      console.log("======================================================\n");
+      console.log(`Server running on port ${PORT}`);
     });
   } catch (err) {
     console.error("Fatal Server Boot Error:", err.message);
